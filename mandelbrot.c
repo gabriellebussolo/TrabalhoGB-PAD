@@ -60,7 +60,7 @@ int main()
     {
         for (int x = 0; x < WIDTH; x++)
         {
-            // Mapeia as coordenadas do pixel para o plano complexo
+            // Mapeia as coordenadas do pixel para o plano complexo (c = x + y*i) -> I vem da biblioteca complex.h
             double complex c = (x_min + (x_max - x_min) * x / WIDTH) +
                                (y_min + (y_max - y_min) * y / HEIGHT) * I;
 
