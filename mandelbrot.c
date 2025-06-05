@@ -29,10 +29,15 @@ typedef struct
 // Estrutura para argumentos da thread
 typedef struct
 {
+    Block block;
     Block *blocks;
     int num_blocks;
     int thread_id;
 } ThreadArgs;
+
+// Variável global para indicar o próximo bloco a ser processado
+int next_block = 0;
+pthread_mutex_t mutex;
 
 // Função para calcular o número de iterações para um ponto específico
 int calculate_mandelbrot(double complex c)
@@ -94,21 +99,31 @@ void process_block(Block *block)
 }
 
 // Função que cada thread executará
-void *thread_function(void *arg)
+void *slave_function(void *arg)
 {
     ThreadArgs *args = (ThreadArgs *)arg;
-    int blocks_per_thread = args->num_blocks / NUM_THREADS;
-    int start_block = args->thread_id * blocks_per_thread;
-    int end_block = (args->thread_id == NUM_THREADS - 1) ? args->num_blocks : start_block + blocks_per_thread;
-
-    for (int i = start_block; i < end_block; i++)
+    while (1)
     {
-        process_block(&args->blocks[i]);
-    }
+        int block_index;
 
+        // Região crítica: pegar o próximo bloco disponível
+        pthread_mutex_lock(&mutex);
+        if (next_block >= args->num_blocks)
+        {
+            pthread_mutex_unlock(&mutex);
+            break; // Não há mais blocos
+        }
+        block_index = next_block;
+        next_block++;
+        pthread_mutex_unlock(&mutex);
+
+        // Processa o bloco fora da região crítica
+        process_block(&args->blocks[block_index]);
+    }
     return NULL;
 }
 
+// Mestre
 int main()
 {
     // Calcula o número de blocos em cada dimensão
@@ -153,6 +168,8 @@ int main()
         }
     }
 
+    pthread_mutex_init(&mutex, NULL);
+
     // Cria as threads
     pthread_t threads[NUM_THREADS];
     ThreadArgs thread_args[NUM_THREADS];
@@ -163,7 +180,7 @@ int main()
         thread_args[i].blocks = blocks;
         thread_args[i].num_blocks = total_blocks;
         thread_args[i].thread_id = i;
-        pthread_create(&threads[i], NULL, thread_function, &thread_args[i]);
+        pthread_create(&threads[i], NULL, slave_function, &thread_args[i]);
     }
 
     // Espera todas as threads terminarem
@@ -171,6 +188,8 @@ int main()
     {
         pthread_join(threads[i], NULL);
     }
+
+    pthread_mutex_destroy(&mutex);
 
     // Copia os blocos para o buffer da imagem
     for (int i = 0; i < total_blocks; i++)
