@@ -3,6 +3,7 @@
 #include <complex.h>
 #include <pthread.h>
 #include <string.h>
+#include <unistd.h> // Para usleep
 
 #define WIDTH 800
 #define HEIGHT 800
@@ -37,7 +38,6 @@ typedef struct
 // Estrutura para argumentos da thread de print na tela
 typedef struct
 {
-    int **resultados;
     unsigned char *image_buffer;
     int total_blocks;
     Block *blocks;
@@ -104,13 +104,13 @@ BlockResult dequeue(ResultsQueue *queue)
     // Espera se a fila estiver vazia
     while (queue->count == 0)
     {
-        printf("Thread %d (printer): Fila de resultados está vazia, esperando...\n", (int)pthread_self());
+        // printf("Thread %d (printer): Fila de resultados está vazia, esperando...\n", (int)pthread_self());
         pthread_cond_wait(&queue->has_results, &queue->mutex);
     }
     BlockResult result = queue->results[queue->head];
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count--;
-
+    printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block_id);
     pthread_mutex_unlock(&queue->mutex);
     return result;
 }
@@ -252,7 +252,36 @@ void *printer_function(void *arg)
 
         free(block_pixels); // Libera a memória alocada para os pixels deste bloco
         processed_count++;
+
+        // Salva a imagem periodicamente para mostrar o progresso
+        const int UPDATE_INTERVAL = 10; // Salva a imagem a cada 50 blocos processados
+        if (processed_count % UPDATE_INTERVAL == 0 || processed_count == args->total_blocks)
+        {
+            // Salva a imagem em um arquivo temporário
+            printf("Thread %d (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
+            FILE *fp_tmp = fopen("mandelbrot.ppm.tmp", "wb");
+            if (fp_tmp == NULL)
+            {
+                perror("Erro ao abrir o arquivo temporário para escrita");
+            }
+            else
+            {
+                fprintf(fp_tmp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+                fwrite(args->image_buffer, 1, WIDTH * HEIGHT * 3, fp_tmp);
+                fclose(fp_tmp);
+
+                // Renomeia o arquivo temporário para o nome final (operação atômica)
+                if (rename("mandelbrot.ppm.tmp", "mandelbrot.ppm") != 0)
+                {
+                    perror("Erro ao renomear o arquivo PPM");
+                }
+                // Adiciona um pequeno atraso para permitir a visualização
+                usleep(100000); // Atraso de 100 milissegundos (0.1 segundo)
+                printf("Thread %d (printer): imagem atualizada.\n", (int)pthread_self());
+            }
+        }
     }
+    printf("Thread printer finalizada.\n");
     return NULL;
 }
 
@@ -279,8 +308,8 @@ int main()
         return 1;
     }
 
-    // Aloca memória para o buffer da imagem final
-    unsigned char *image_buffer = (unsigned char *)malloc(WIDTH * HEIGHT * 3);
+    // Aloca memória para o buffer da imagem final e inicializa com zeros (preto)
+    unsigned char *image_buffer = (unsigned char *)calloc(WIDTH * HEIGHT * 3, sizeof(unsigned char));
     if (image_buffer == NULL)
     {
         perror("Erro ao alocar memória para image_buffer");
@@ -323,6 +352,7 @@ int main()
         thread_args[i].resultados = NULL; // Não usa mais o array resultados diretamente aqui
 
         pthread_create(&threads[i], NULL, worker_function, &thread_args[i]);
+        printf("Thread %d (worker) criada.\n", i);
     }
 
     // Inicializa e inicia a thread escritora
@@ -330,11 +360,8 @@ int main()
     printer_args.total_blocks = total_blocks;
     printer_args.blocks = blocks; // A printer também precisa dos blocos para saber as dimensões e posições
 
-    // resultados no PrinterArgs não é mais usado
-    printer_args.resultados = NULL;
-
     pthread_create(&threads[NUM_THREADS], NULL, printer_function, &printer_args);
-
+    printf("Thread printer criada.\n");
     // Espera todas as threads terminarem
     for (int i = 0; i < NUM_THREADS + 1; i++)
     {
@@ -350,23 +377,10 @@ int main()
     // Libera a memória dos blocos
     free(blocks);
 
-    // Salva a imagem em um arquivo PPM
-    FILE *fp = fopen("mandelbrot.ppm", "wb");
-    if (fp == NULL)
-    {
-        perror("Erro ao abrir o arquivo para escrita");
-        free(image_buffer);
-        return 1;
-    }
-
-    fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
-    fwrite(image_buffer, 1, WIDTH * HEIGHT * 3, fp);
-    fclose(fp);
-
     // Libera a memória do buffer da imagem
     free(image_buffer);
 
-    printf("Imagem mandelbrot.ppm gerada com sucesso.\n");
+    printf("Geração do fractal de Mandelbrot concluída. Verifique mandelbrot.ppm\n");
 
     return 0;
 }
