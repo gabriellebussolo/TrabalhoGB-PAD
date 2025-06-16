@@ -3,7 +3,6 @@
 #include <complex.h>
 #include <pthread.h>
 #include <string.h>
-#include <unistd.h> // Para usleep
 
 #define WIDTH 800
 #define HEIGHT 800
@@ -11,9 +10,9 @@
 #define BLOCK_SIZE 10
 #define NUM_THREADS 4
 
-// Limites do plano complexo (região do fractal)
-#define X_MIN -2.0
-#define X_MAX 2.0
+// Limites da região do fractal
+#define X_MIN -2.5
+#define X_MAX 1.5
 #define Y_MIN -2.0
 #define Y_MAX 2.0
 
@@ -29,8 +28,7 @@ typedef struct
 // Estrutura para argumentos das threads trabalhadoras
 typedef struct
 {
-    Block *blocks;
-    int **resultados;
+    Block *blocks; // Blocos de xy
     int num_blocks;
     int thread_id;
 } WorkerArgs;
@@ -39,8 +37,8 @@ typedef struct
 typedef struct
 {
     unsigned char *image_buffer;
-    int total_blocks;
-    Block *blocks;
+    int num_blocks;
+    Block *blocks; // Blocos de RGB
 } PrinterArgs;
 
 // Estrutura para armazenar o resultado de um bloco
@@ -58,8 +56,6 @@ typedef struct
     int head;
     int tail;
     int count;
-    pthread_mutex_t mutex;
-    pthread_cond_t has_results; // Sinaliza que há resultados na fila
 } ResultsQueue;
 
 // Variável global para a fila de resultados
@@ -68,6 +64,8 @@ ResultsQueue results_queue;
 // Variável global para indicar o próximo bloco a ser processado pelas workers
 int next_block = 0;
 pthread_mutex_t worker_mutex; // Mutex específico para o trabalhador pegar o próximo bloco
+pthread_mutex_t printer_mutex; // Mutex específico para o printer pegar o próximo resultado
+pthread_cond_t has_results; // Sinaliza que há resultados na fila
 
 // Função para inicializar a fila de resultados
 void init_queue(ResultsQueue *queue, int capacity)
@@ -82,46 +80,34 @@ void init_queue(ResultsQueue *queue, int capacity)
     queue->head = 0;
     queue->tail = 0;
     queue->count = 0;
-    pthread_mutex_init(&queue->mutex, NULL);
-    pthread_cond_init(&queue->has_results, NULL);
 }
 
 // Função para adicionar um resultado à fila
 void enqueue(ResultsQueue *queue, BlockResult result)
 {
-    pthread_mutex_lock(&queue->mutex);
+    pthread_mutex_lock(&printer_mutex);
     queue->results[queue->tail] = result; // adiciona o resultado no fim da fila
     queue->tail = (queue->tail + 1) % queue->capacity;
     queue->count++;
-    pthread_cond_signal(&queue->has_results); // Sinaliza que há novos resultados
-    pthread_mutex_unlock(&queue->mutex);
+    pthread_mutex_unlock(&printer_mutex);
+    pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
 }
 
 // Função para retirar um resultado da fila
 BlockResult dequeue(ResultsQueue *queue)
 {
-    pthread_mutex_lock(&queue->mutex);
+    pthread_mutex_lock(&printer_mutex);
     // Espera se a fila estiver vazia
     while (queue->count == 0)
     {
-        // printf("Thread %d (printer): Fila de resultados está vazia, esperando...\n", (int)pthread_self());
-        pthread_cond_wait(&queue->has_results, &queue->mutex);
+        pthread_cond_wait(&has_results, &printer_mutex);
     }
     BlockResult result = queue->results[queue->head];
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count--;
     printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block_id);
-    pthread_mutex_unlock(&queue->mutex);
+    pthread_mutex_unlock(&printer_mutex);
     return result;
-}
-
-// Função para liberar a memória da fila
-void destroy_queue(ResultsQueue *queue)
-{
-    // Note: Os pixels dentro dos BlockResult precisam ser liberados individualmente após serem usados.
-    free(queue->results);
-    pthread_mutex_destroy(&queue->mutex);
-    pthread_cond_destroy(&queue->has_results);
 }
 
 // Função para calcular o número de iterações para um ponto específico
@@ -228,7 +214,7 @@ void *printer_function(void *arg)
     PrinterArgs *args = (PrinterArgs *)arg;
     int processed_count = 0;
 
-    while (processed_count < args->total_blocks)
+    while (processed_count < args->num_blocks)
     {
         BlockResult result = dequeue(&results_queue); // Pega um resultado da fila
 
@@ -254,7 +240,7 @@ void *printer_function(void *arg)
         processed_count++;
 
         // Salva a imagem periodicamente para mostrar o progresso
-        printf("Thread %lu (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
+        printf("Thread %d (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
         FILE *fp = fopen("mandelbrot.ppm", "wb");
         if (fp == NULL)
         {
@@ -266,7 +252,7 @@ void *printer_function(void *arg)
             fwrite(args->image_buffer, 1, WIDTH * HEIGHT * 3, fp);
             fclose(fp);
         }
-        printf("Thread %lu (printer): imagem atualizada.\n", (int)pthread_self());
+        printf("Thread %d (printer): imagem atualizada.\n", (int)pthread_self());
     }
     printf("Thread printer finalizada.\n");
     return NULL;
@@ -307,6 +293,10 @@ int main()
     // Inicializa o mutex dos workers
     pthread_mutex_init(&worker_mutex, NULL);
 
+    // Inicializa o mutex e a condição do printer
+    pthread_mutex_init(&printer_mutex, NULL);
+    pthread_cond_init(&has_results, NULL);
+
     // Inicializa a fila de resultados
     init_queue(&results_queue, total_blocks);
 
@@ -335,8 +325,6 @@ int main()
         thread_args[i].blocks = blocks; // Ainda precisamos passar os blocos para as workers para elas saberem as dimensões
         thread_args[i].num_blocks = total_blocks;
         thread_args[i].thread_id = i;
-        // resultados e num_blocks no WorkerArgs não são mais estritamente necessários, mas mantidos por enquanto
-        thread_args[i].resultados = NULL; // Não usa mais o array resultados diretamente aqui
 
         pthread_create(&threads[i], NULL, worker_function, &thread_args[i]);
         printf("Thread %d (worker) criada.\n", i);
@@ -344,7 +332,7 @@ int main()
 
     // Inicializa e inicia a thread escritora
     printer_args.image_buffer = image_buffer;
-    printer_args.total_blocks = total_blocks;
+    printer_args.num_blocks = total_blocks;
     printer_args.blocks = blocks; // A printer também precisa dos blocos para saber as dimensões e posições
 
     pthread_create(&threads[NUM_THREADS], NULL, printer_function, &printer_args);
@@ -354,18 +342,6 @@ int main()
     {
         pthread_join(threads[i], NULL);
     }
-
-    // Destroi o mutex dos workers
-    pthread_mutex_destroy(&worker_mutex);
-
-    // Destroi a fila de resultados
-    destroy_queue(&results_queue);
-
-    // Libera a memória dos blocos
-    free(blocks);
-
-    // Libera a memória do buffer da imagem
-    free(image_buffer);
 
     printf("Geração do fractal de Mandelbrot concluída. Verifique mandelbrot.ppm\n");
 
