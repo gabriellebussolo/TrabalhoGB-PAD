@@ -254,32 +254,19 @@ void *printer_function(void *arg)
         processed_count++;
 
         // Salva a imagem periodicamente para mostrar o progresso
-        const int UPDATE_INTERVAL = 10; // Salva a imagem a cada 50 blocos processados
-        if (processed_count % UPDATE_INTERVAL == 0 || processed_count == args->total_blocks)
+        printf("Thread %lu (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
+        FILE *fp = fopen("mandelbrot.ppm", "wb");
+        if (fp == NULL)
         {
-            // Salva a imagem em um arquivo temporário
-            printf("Thread %d (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
-            FILE *fp_tmp = fopen("mandelbrot.ppm.tmp", "wb");
-            if (fp_tmp == NULL)
-            {
-                perror("Erro ao abrir o arquivo temporário para escrita");
-            }
-            else
-            {
-                fprintf(fp_tmp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
-                fwrite(args->image_buffer, 1, WIDTH * HEIGHT * 3, fp_tmp);
-                fclose(fp_tmp);
-
-                // Renomeia o arquivo temporário para o nome final (operação atômica)
-                if (rename("mandelbrot.ppm.tmp", "mandelbrot.ppm") != 0)
-                {
-                    perror("Erro ao renomear o arquivo PPM");
-                }
-                // Adiciona um pequeno atraso para permitir a visualização
-                usleep(100000); // Atraso de 100 milissegundos (0.1 segundo)
-                printf("Thread %d (printer): imagem atualizada.\n", (int)pthread_self());
-            }
+            perror("Erro ao abrir o arquivo temporário para escrita");
         }
+        else
+        {
+            fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+            fwrite(args->image_buffer, 1, WIDTH * HEIGHT * 3, fp);
+            fclose(fp);
+        }
+        printf("Thread %lu (printer): imagem atualizada.\n", (int)pthread_self());
     }
     printf("Thread printer finalizada.\n");
     return NULL;
