@@ -94,7 +94,8 @@ BlockResult dequeue(ResultsQueue *queue)
     BlockResult result = queue->results[queue->head];
     queue->head++;
     queue->count--;
-    printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block->block_id);
+    printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n",
+           (int)pthread_self(), result.block->block_id);
     return result;
 }
 
@@ -173,7 +174,8 @@ void *worker_function(void *arg)
         pthread_mutex_lock(&worker_mutex);
         current_block_id = next_block;
         next_block++;
-        printf("Thread %d (worker): pegou bloco %d do buffer de trabalho.\n", args->thread_id, current_block_id);
+        printf("Thread %d (worker): pegou bloco %d do buffer de trabalho.\n",
+               args->thread_id, current_block_id);
         pthread_mutex_unlock(&worker_mutex);
 
         // Calcula o Mandelbrot para o bloco
@@ -190,7 +192,8 @@ void *worker_function(void *arg)
         pthread_mutex_unlock(&printer_mutex);
         pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
 
-        printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n", args->thread_id, current_block_id);
+        printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n",
+               args->thread_id, current_block_id);
     }
     return NULL;
 }
@@ -247,7 +250,8 @@ void *printer_function()
         }
         else
         {
-            fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT); // P6 = formato binário | 255 = valor máximo de cor (RGB é de 0 a 255)
+            // P6 = formato binário | 255 = valor máximo de cor (RGB é de 0 a 255)
+            fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
             fwrite(image_buffer, 1, WIDTH * HEIGHT * 3, fp);
             fclose(fp);
         }
