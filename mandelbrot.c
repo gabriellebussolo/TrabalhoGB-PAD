@@ -85,7 +85,7 @@ void enqueue(ResultsQueue *queue, BlockResult result)
 {
     pthread_mutex_lock(&printer_mutex);
     queue->results[queue->tail] = result; // adiciona o resultado no fim da fila
-    queue->tail = (queue->tail + 1) % queue->capacity;
+    queue->tail++;
     queue->count++;
     pthread_mutex_unlock(&printer_mutex);
     pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
@@ -95,7 +95,7 @@ void enqueue(ResultsQueue *queue, BlockResult result)
 BlockResult dequeue(ResultsQueue *queue)
 {
     BlockResult result = queue->results[queue->head];
-    queue->head = (queue->head + 1) % queue->capacity;
+    queue->head++;
     queue->count--;
     printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block->block_id);
     return result;
