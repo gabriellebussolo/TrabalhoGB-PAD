@@ -186,7 +186,7 @@ void *worker_function(void *arg)
         result.block = current_block;
 
         pthread_mutex_lock(&printer_mutex);
-        enqueue(&results_queue, result); // Adiciona o resultado na fila global
+        enqueue(&results_queue, result); // Adiciona o resultado na fila de resultados
         pthread_mutex_unlock(&printer_mutex);
         pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
 
@@ -247,7 +247,7 @@ void *printer_function()
         }
         else
         {
-            fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+            fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT); // P6 = formato binário | 255 = valor máximo de cor (RGB é de 0 a 255)
             fwrite(image_buffer, 1, WIDTH * HEIGHT * 3, fp);
             fclose(fp);
         }
@@ -309,6 +309,7 @@ int main()
     pthread_t threads[NUM_THREADS + 1]; // +1 para a thread de print na tela
     WorkerArgs thread_args[NUM_THREADS];
 
+    // Inicializa a thread printer
     pthread_create(&threads[NUM_THREADS], NULL, printer_function, NULL);
     printf("Thread printer criada.\n");
 
