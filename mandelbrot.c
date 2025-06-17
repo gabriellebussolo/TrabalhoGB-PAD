@@ -19,6 +19,7 @@
 // Estrutura para representar um bloco
 typedef struct
 {
+    int block_id;
     int start_x;
     int start_y;
     int end_x;
@@ -34,7 +35,6 @@ typedef struct
 // Estrutura para armazenar o resultado de um bloco
 typedef struct
 {
-    int block_id;
     unsigned char *pixels; // Os dados RGB para todos os pixels deste bloco
     Block *block;          // Bloco de xy
 } BlockResult;
@@ -97,7 +97,7 @@ BlockResult dequeue(ResultsQueue *queue)
     BlockResult result = queue->results[queue->head];
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count--;
-    printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block_id);
+    printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block->block_id);
     return result;
 }
 
@@ -171,25 +171,24 @@ void *worker_function(void *arg)
     WorkerArgs *args = (WorkerArgs *)arg;
     while (next_block < total_blocks)
     {
-        int block_id;
+        int current_block_id;
         // Obter o próximo bloco a ser processado
         pthread_mutex_lock(&worker_mutex);
-        block_id = next_block;
+        current_block_id = next_block;
         next_block++;
-        printf("Thread %d (worker): pegou bloco %d do buffer de trabalho.\n", args->thread_id, block_id);
+        printf("Thread %d (worker): pegou bloco %d do buffer de trabalho.\n", args->thread_id, current_block_id);
         pthread_mutex_unlock(&worker_mutex);
 
         // Calcula o Mandelbrot para o bloco
-        Block *current_block = &workBuffer[block_id];
+        Block *current_block = &workBuffer[current_block_id];
         unsigned char *block_RGBpixels = process_block(current_block);
 
         // Cria o resultado do bloco
         BlockResult result;
-        result.block_id = block_id;
         result.pixels = block_RGBpixels;
         result.block = current_block;
         enqueue(&results_queue, result); // Adiciona o resultado na fila global
-        printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n", args->thread_id, block_id);
+        printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n", args->thread_id, current_block_id);
     }
     return NULL;
 }
@@ -295,6 +294,7 @@ int main()
     {
         for (int j = 0; j < num_blocks_x; j++)
         {
+            workBuffer[block_index].block_id = block_index;
             workBuffer[block_index].start_x = j * BLOCK_SIZE;
             workBuffer[block_index].start_y = i * BLOCK_SIZE;
             workBuffer[block_index].end_x = (j + 1) * BLOCK_SIZE > WIDTH ? WIDTH : (j + 1) * BLOCK_SIZE;
