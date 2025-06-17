@@ -268,10 +268,10 @@ int main()
     total_blocks = num_blocks_x * num_blocks_y; // Recalcula com ajuste
 
     // Aloca memória para os blocos
-    Block *blocks = (Block *)malloc(total_blocks * sizeof(Block));
-    if (blocks == NULL)
+    Block *workBuffer = (Block *)malloc(total_blocks * sizeof(Block));
+    if (workBuffer == NULL)
     {
-        perror("Erro ao alocar memória para blocos");
+        perror("Erro ao alocar memória para workBuffer");
         return 1;
     }
 
@@ -280,7 +280,6 @@ int main()
     if (image_buffer == NULL)
     {
         perror("Erro ao alocar memória para image_buffer");
-        free(blocks);
         return 1;
     }
 
@@ -300,10 +299,10 @@ int main()
     {
         for (int j = 0; j < num_blocks_x; j++)
         {
-            blocks[block_index].start_x = j * BLOCK_SIZE;
-            blocks[block_index].start_y = i * BLOCK_SIZE;
-            blocks[block_index].end_x = (j + 1) * BLOCK_SIZE > WIDTH ? WIDTH : (j + 1) * BLOCK_SIZE;
-            blocks[block_index].end_y = (i + 1) * BLOCK_SIZE > HEIGHT ? HEIGHT : (i + 1) * BLOCK_SIZE;
+            workBuffer[block_index].start_x = j * BLOCK_SIZE;
+            workBuffer[block_index].start_y = i * BLOCK_SIZE;
+            workBuffer[block_index].end_x = (j + 1) * BLOCK_SIZE > WIDTH ? WIDTH : (j + 1) * BLOCK_SIZE;
+            workBuffer[block_index].end_y = (i + 1) * BLOCK_SIZE > HEIGHT ? HEIGHT : (i + 1) * BLOCK_SIZE;
             block_index++;
         }
     }
@@ -313,10 +312,18 @@ int main()
     WorkerArgs thread_args[NUM_THREADS];
     PrinterArgs printer_args;
 
-    // Inicializa e inicia as threads de processamento
+    // Inicializa e inicia a thread printer
+    printer_args.image_buffer = image_buffer;
+    printer_args.num_blocks = total_blocks;
+    printer_args.blocks = workBuffer;
+
+    pthread_create(&threads[NUM_THREADS], NULL, printer_function, &printer_args);
+    printf("Thread printer criada.\n");
+    
+    // Inicializa e inicia as threads workers de processamento
     for (int i = 0; i < NUM_THREADS; i++)
     {
-        thread_args[i].blocks = blocks; // Ainda precisamos passar os blocos para as workers para elas saberem as dimensões
+        thread_args[i].blocks = workBuffer;
         thread_args[i].num_blocks = total_blocks;
         thread_args[i].thread_id = i;
 
@@ -324,13 +331,7 @@ int main()
         printf("Thread %d (worker) criada.\n", i);
     }
 
-    // Inicializa e inicia a thread escritora
-    printer_args.image_buffer = image_buffer;
-    printer_args.num_blocks = total_blocks;
-    printer_args.blocks = blocks; // A printer também precisa dos blocos para saber as dimensões e posições
-
-    pthread_create(&threads[NUM_THREADS], NULL, printer_function, &printer_args);
-    printf("Thread printer criada.\n");
+    
     // Espera todas as threads terminarem
     for (int i = 0; i < NUM_THREADS + 1; i++)
     {
