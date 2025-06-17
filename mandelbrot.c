@@ -28,25 +28,15 @@ typedef struct
 // Estrutura para argumentos das threads trabalhadoras
 typedef struct
 {
-    Block *blocks; // Blocos de xy
-    int num_blocks;
     int thread_id;
 } WorkerArgs;
-
-// Estrutura para argumentos da thread de print na tela
-typedef struct
-{
-    unsigned char *image_buffer;
-    int num_blocks;
-    Block *blocks; // Blocos de RGB
-} PrinterArgs;
 
 // Estrutura para armazenar o resultado de um bloco
 typedef struct
 {
     int block_id;
     unsigned char *pixels; // Os dados RGB para todos os pixels deste bloco
-    Block *block; // Bloco de xy
+    Block *block;          // Bloco de xy
 } BlockResult;
 
 // Estrutura de uma fila para o buffer de resultados
@@ -59,14 +49,21 @@ typedef struct
     int count;
 } ResultsQueue;
 
-// Variável global para a fila de resultados
+// Fila de resultados
 ResultsQueue results_queue;
 
-// Variável global para indicar o próximo bloco a ser processado pelas workers
+// Buffer de trabalho
+Block *workBuffer;
+
+// Numero total de blocos
+int total_blocks;
+
+// Indica o próximo bloco a ser processado pelas workers
 int next_block = 0;
-pthread_mutex_t worker_mutex; // Mutex específico para o trabalhador pegar o próximo bloco
+
+pthread_mutex_t worker_mutex;  // Mutex específico para o trabalhador pegar o próximo bloco
 pthread_mutex_t printer_mutex; // Mutex específico para o printer pegar o próximo resultado
-pthread_cond_t has_results; // Sinaliza que há resultados na fila
+pthread_cond_t has_results;    // Sinaliza que há resultados na fila
 
 // Função para inicializar a fila de resultados
 void init_queue(ResultsQueue *queue, int capacity)
@@ -172,7 +169,7 @@ unsigned char *process_block(Block *block)
 void *worker_function(void *arg)
 {
     WorkerArgs *args = (WorkerArgs *)arg;
-    while (next_block < args->num_blocks)
+    while (next_block < total_blocks)
     {
         int block_id;
         // Obter o próximo bloco a ser processado
@@ -183,7 +180,7 @@ void *worker_function(void *arg)
         pthread_mutex_unlock(&worker_mutex);
 
         // Calcula o Mandelbrot para o bloco
-        Block *current_block = &args->blocks[block_id];
+        Block *current_block = &workBuffer[block_id];
         unsigned char *block_RGBpixels = process_block(current_block);
 
         // Cria o resultado do bloco
@@ -198,12 +195,19 @@ void *worker_function(void *arg)
 }
 
 // Função que a thread printer executará
-void *printer_function(void *arg)
+void *printer_function()
 {
-    PrinterArgs *args = (PrinterArgs *)arg;
     int processed_count = 0;
 
-    while (processed_count < args->num_blocks)
+    // Aloca memória para o buffer da imagem final e inicializa com zeros (preto)
+    unsigned char *image_buffer = (unsigned char *)calloc(WIDTH * HEIGHT * 3, sizeof(unsigned char));
+    if (image_buffer == NULL)
+    {
+        perror("Erro ao alocar memória para image_buffer");
+        return NULL;
+    }
+
+    while (processed_count < total_blocks)
     {
         pthread_mutex_lock(&printer_mutex);
         // Espera se a fila estiver vazia
@@ -226,9 +230,9 @@ void *printer_function(void *arg)
             for (int x = 0; x < block_width; x++)
             {
                 int destination_pos = ((block->start_y + y) * WIDTH + block->start_x + x) * 3;
-                args->image_buffer[destination_pos] = block_pixels[pixel_index++];
-                args->image_buffer[destination_pos + 1] = block_pixels[pixel_index++];
-                args->image_buffer[destination_pos + 2] = block_pixels[pixel_index++];
+                image_buffer[destination_pos] = block_pixels[pixel_index++];
+                image_buffer[destination_pos + 1] = block_pixels[pixel_index++];
+                image_buffer[destination_pos + 2] = block_pixels[pixel_index++];
             }
         }
 
@@ -243,7 +247,7 @@ void *printer_function(void *arg)
         else
         {
             fprintf(fp, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
-            fwrite(args->image_buffer, 1, WIDTH * HEIGHT * 3, fp);
+            fwrite(image_buffer, 1, WIDTH * HEIGHT * 3, fp);
             fclose(fp);
         }
         printf("Thread %d (printer): imagem atualizada.\n", (int)pthread_self());
@@ -257,7 +261,7 @@ int main()
     // Calcula o número total de blocos
     int num_blocks_x = WIDTH / BLOCK_SIZE;
     int num_blocks_y = HEIGHT / BLOCK_SIZE;
-    int total_blocks = num_blocks_x * num_blocks_y;
+    total_blocks = num_blocks_x * num_blocks_y;
 
     // Ajusta o tamanho do bloco se a largura/altura não for divisível
     if (WIDTH % BLOCK_SIZE != 0)
@@ -268,18 +272,10 @@ int main()
     total_blocks = num_blocks_x * num_blocks_y; // Recalcula com ajuste
 
     // Aloca memória para os blocos
-    Block *workBuffer = (Block *)malloc(total_blocks * sizeof(Block));
+    workBuffer = (Block *)malloc(total_blocks * sizeof(Block));
     if (workBuffer == NULL)
     {
         perror("Erro ao alocar memória para workBuffer");
-        return 1;
-    }
-
-    // Aloca memória para o buffer da imagem final e inicializa com zeros (preto)
-    unsigned char *image_buffer = (unsigned char *)calloc(WIDTH * HEIGHT * 3, sizeof(unsigned char));
-    if (image_buffer == NULL)
-    {
-        perror("Erro ao alocar memória para image_buffer");
         return 1;
     }
 
@@ -310,34 +306,24 @@ int main()
     // Cria as threads
     pthread_t threads[NUM_THREADS + 1]; // +1 para a thread de print na tela
     WorkerArgs thread_args[NUM_THREADS];
-    PrinterArgs printer_args;
 
-    // Inicializa e inicia a thread printer
-    printer_args.image_buffer = image_buffer;
-    printer_args.num_blocks = total_blocks;
-    printer_args.blocks = workBuffer;
-
-    pthread_create(&threads[NUM_THREADS], NULL, printer_function, &printer_args);
+    pthread_create(&threads[NUM_THREADS], NULL, printer_function, NULL);
     printf("Thread printer criada.\n");
-    
+
     // Inicializa e inicia as threads workers de processamento
     for (int i = 0; i < NUM_THREADS; i++)
     {
-        thread_args[i].blocks = workBuffer;
-        thread_args[i].num_blocks = total_blocks;
         thread_args[i].thread_id = i;
 
         pthread_create(&threads[i], NULL, worker_function, &thread_args[i]);
         printf("Thread %d (worker) criada.\n", i);
     }
 
-    
     // Espera todas as threads terminarem
     for (int i = 0; i < NUM_THREADS + 1; i++)
     {
         pthread_join(threads[i], NULL);
     }
-
 
     printf("Geração do fractal de Mandelbrot concluída. Verifique mandelbrot.ppm\n");
 
