@@ -46,6 +46,7 @@ typedef struct
 {
     int block_id;
     unsigned char *pixels; // Os dados RGB para todos os pixels deste bloco
+    Block *block; // Bloco de xy
 } BlockResult;
 
 // Estrutura de uma fila para o buffer de resultados
@@ -96,17 +97,10 @@ void enqueue(ResultsQueue *queue, BlockResult result)
 // Função para retirar um resultado da fila
 BlockResult dequeue(ResultsQueue *queue)
 {
-    pthread_mutex_lock(&printer_mutex);
-    // Espera se a fila estiver vazia
-    while (queue->count == 0)
-    {
-        pthread_cond_wait(&has_results, &printer_mutex);
-    }
     BlockResult result = queue->results[queue->head];
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count--;
     printf("Thread %d (printer): Pegou bloco %d da fila de resultados...\n", (int)pthread_self(), result.block_id);
-    pthread_mutex_unlock(&printer_mutex);
     return result;
 }
 
@@ -178,17 +172,11 @@ unsigned char *process_block(Block *block)
 void *worker_function(void *arg)
 {
     WorkerArgs *args = (WorkerArgs *)arg;
-    while (1)
+    while (next_block < args->num_blocks)
     {
         int block_id;
-
-        // Região crítica 1: obter o próximo bloco a ser processado
-        pthread_mutex_lock(&worker_mutex); // Usa o mutex específico para workers
-        if (next_block >= args->num_blocks)
-        {
-            pthread_mutex_unlock(&worker_mutex);
-            break; // Todos os blocos foram atribuídos
-        }
+        // Obter o próximo bloco a ser processado
+        pthread_mutex_lock(&worker_mutex);
         block_id = next_block;
         next_block++;
         printf("Thread %d (worker): pegou bloco %d do buffer de trabalho.\n", args->thread_id, block_id);
@@ -196,12 +184,13 @@ void *worker_function(void *arg)
 
         // Calcula o Mandelbrot para o bloco
         Block *current_block = &args->blocks[block_id];
-        unsigned char *block_pixels = process_block(current_block);
+        unsigned char *block_RGBpixels = process_block(current_block);
 
         // Cria o resultado do bloco
         BlockResult result;
         result.block_id = block_id;
-        result.pixels = block_pixels;
+        result.pixels = block_RGBpixels;
+        result.block = current_block;
         enqueue(&results_queue, result); // Adiciona o resultado na fila global
         printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n", args->thread_id, block_id);
     }
@@ -216,10 +205,17 @@ void *printer_function(void *arg)
 
     while (processed_count < args->num_blocks)
     {
+        pthread_mutex_lock(&printer_mutex);
+        // Espera se a fila estiver vazia
+        while (results_queue.count == 0)
+        {
+            pthread_cond_wait(&has_results, &printer_mutex);
+        }
         BlockResult result = dequeue(&results_queue); // Pega um resultado da fila
+        pthread_mutex_unlock(&printer_mutex);
 
         // Copia os pixels do bloco para o image_buffer
-        Block *block = &args->blocks[result.block_id];
+        Block *block = result.block; // Bloco de xy
         int block_width = block->end_x - block->start_x;
         int block_height = block->end_y - block->start_y;
         unsigned char *block_pixels = result.pixels; // Ponteiro para os pixels do resultado
@@ -229,17 +225,15 @@ void *printer_function(void *arg)
         {
             for (int x = 0; x < block_width; x++)
             {
-                int dst_pos = ((block->start_y + y) * WIDTH + block->start_x + x) * 3;
-                args->image_buffer[dst_pos] = block_pixels[pixel_index++];
-                args->image_buffer[dst_pos + 1] = block_pixels[pixel_index++];
-                args->image_buffer[dst_pos + 2] = block_pixels[pixel_index++];
+                int destination_pos = ((block->start_y + y) * WIDTH + block->start_x + x) * 3;
+                args->image_buffer[destination_pos] = block_pixels[pixel_index++];
+                args->image_buffer[destination_pos + 1] = block_pixels[pixel_index++];
+                args->image_buffer[destination_pos + 2] = block_pixels[pixel_index++];
             }
         }
 
-        free(block_pixels); // Libera a memória alocada para os pixels deste bloco
         processed_count++;
 
-        // Salva a imagem periodicamente para mostrar o progresso
         printf("Thread %d (printer): atualizando imagem com %d blocos.\n", (int)pthread_self(), processed_count);
         FILE *fp = fopen("mandelbrot.ppm", "wb");
         if (fp == NULL)
@@ -342,6 +336,7 @@ int main()
     {
         pthread_join(threads[i], NULL);
     }
+
 
     printf("Geração do fractal de Mandelbrot concluída. Verifique mandelbrot.ppm\n");
 
