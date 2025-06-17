@@ -43,7 +43,6 @@ Os seguintes parâmetros podem ser ajustados no código fonte:
 - `MAX_ITERATIONS`: Número máximo de iterações (padrão: 1000)
 - `BLOCK_SIZE`: Tamanho dos blocos de processamento (padrão: 10)
 - `NUM_THREADS`: Número de threads trabalhadoras (padrão: 4)
-- `X_MIN`, `X_MAX`, `Y_MIN`, `Y_MAX`: Limites do plano complexo
 
 ## Estrutura do Projeto
 
