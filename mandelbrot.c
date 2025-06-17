@@ -83,12 +83,9 @@ void init_queue(ResultsQueue *queue, int capacity)
 // Função para adicionar um resultado à fila
 void enqueue(ResultsQueue *queue, BlockResult result)
 {
-    pthread_mutex_lock(&printer_mutex);
     queue->results[queue->tail] = result; // adiciona o resultado no fim da fila
     queue->tail++;
     queue->count++;
-    pthread_mutex_unlock(&printer_mutex);
-    pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
 }
 
 // Função para retirar um resultado da fila
@@ -187,7 +184,12 @@ void *worker_function(void *arg)
         BlockResult result;
         result.pixels = block_RGBpixels;
         result.block = current_block;
+
+        pthread_mutex_lock(&printer_mutex);
         enqueue(&results_queue, result); // Adiciona o resultado na fila global
+        pthread_mutex_unlock(&printer_mutex);
+        pthread_cond_signal(&has_results); // Sinaliza que há novos resultados
+
         printf("Thread %d (worker): adicionou bloco %d no buffer de resultados.\n", args->thread_id, current_block_id);
     }
     return NULL;
